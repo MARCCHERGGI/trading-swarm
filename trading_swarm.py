@@ -1,4 +1,4 @@
-"""
+﻿"""
 Multi-Agent Trading Swarm System
 
 Architecture: 6 specialized technical analysis agents each independently analyze
@@ -29,7 +29,7 @@ import ta
 class AgentSignal:
     """Return type for every agent's analyze() call."""
     signal: int        # -1 = sell, 0 = hold, 1 = buy
-    confidence: float  # 0.0 – 1.0
+    confidence: float  # 0.0 â€“ 1.0
     reason: str
 
 
@@ -177,7 +177,7 @@ class MomentumAgent(BaseAgent):
         # Acceleration: short-term momentum exceeding long-term = strengthening trend
         accelerating = abs(roc5) > abs(roc10) and np.sign(roc5) == np.sign(roc10)
 
-        conf = min(abs(roc10) / 15, 0.85)  # Scale: 15% ROC → max confidence
+        conf = min(abs(roc10) / 15, 0.85)  # Scale: 15% ROC â†’ max confidence
         if accelerating:
             conf = min(conf + 0.1, 0.9)
 
@@ -400,17 +400,20 @@ class SwarmConsensus:
         # Track each agent's recent prediction accuracy for weight updates
         self.history: dict[str, list[bool]] = {agent.name: [] for agent in agents}
 
-    def get_signals(self, df: pd.DataFrame) -> dict[str, AgentSignal]:
+    def get_signals(self, df: pd.DataFrame, ticker: str = "") -> dict[str, AgentSignal]:
         """Run all agents and return their individual signals."""
         signals = {}
         for agent in self.agents:
             try:
+                # Pass ticker to agents that need it (e.g. SentimentAgent)
+                if hasattr(agent, "_ticker"):
+                    agent._ticker = ticker
                 signals[agent.name] = agent.analyze(df)
             except Exception as e:
                 signals[agent.name] = AgentSignal(0, 0.0, f"Error: {e}")
         return signals
 
-    def consensus(self, df: pd.DataFrame) -> tuple[dict[str, AgentSignal], float, float]:
+    def consensus(self, df: pd.DataFrame, ticker: str = "") -> tuple[dict[str, AgentSignal], float, float]:
         """
         Run all agents, compute weighted consensus.
 
@@ -418,7 +421,7 @@ class SwarmConsensus:
         - consensus_score: -1.0 to +1.0 (weighted average of agent signals)
         - aggregate_confidence: 0.0 to 1.0 (how much the swarm agrees)
         """
-        signals = self.get_signals(df)
+        signals = self.get_signals(df, ticker=ticker)
 
         # Weighted vote: each agent's signal * confidence * weight
         weighted_sum = 0.0
@@ -453,7 +456,7 @@ class SwarmConsensus:
         """
         Update an agent's weight based on prediction outcome.
         Uses the last `lookback` predictions to compute accuracy,
-        then sets weight = 0.5 + accuracy (range: 0.5 – 1.5).
+        then sets weight = 0.5 + accuracy (range: 0.5 â€“ 1.5).
         """
         self.history[agent_name].append(was_correct)
         # Keep only last N entries
@@ -650,7 +653,11 @@ class LiveScanner:
                 })
                 continue
 
-            signals, score, confidence = self.swarm.consensus(df)
+            # Set ticker on all agents that need it (e.g. SentimentAgent)
+            for agent in self.swarm.agents:
+                if hasattr(agent, "_ticker"):
+                    agent._ticker = ticker
+            signals, score, confidence = self.swarm.consensus(df, ticker=ticker)
             price = df["Close"].iloc[-1]
 
             if score >= 0.25:
@@ -685,7 +692,47 @@ class LiveScanner:
 
 
 # ---------------------------------------------------------------------------
-# Factory: create a fully-initialized swarm with all 6 agents
+# Agent 7: News Sentiment via Yahoo Finance RSS (no API key needed)
+# ---------------------------------------------------------------------------
+class SentimentAgent(BaseAgent):
+    """Scores recent Yahoo Finance news headlines for bullish/bearish tone."""
+
+    name = "Sentiment"
+    _ticker: str = ""  # set by LiveScanner before analyze() is called
+
+    def analyze(self, df: pd.DataFrame) -> AgentSignal:
+        try:
+            import feedparser
+            clean = getattr(self, "_ticker", "").replace("-USD", "").replace("-", "")
+            if not clean:
+                return AgentSignal(0, 0.1, "No ticker set")
+            feed = feedparser.parse(
+                f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={clean}&region=US&lang=en-US"
+            )
+            if not feed.entries:
+                return AgentSignal(0, 0.1, "No headlines")
+
+            pos = ["surge","rally","gain","beat","record","upgrade","bull","strong","rises","jumps","soars","profit","growth"]
+            neg = ["drop","fall","crash","miss","downgrade","bear","weak","falls","tumbles","concern","risk","loss","warning","decline"]
+
+            score, count = 0, 0
+            for entry in feed.entries[:10]:
+                t = entry.title.lower()
+                score += sum(1 for w in pos if w in t) - sum(1 for w in neg if w in t)
+                count += 1
+
+            if count == 0:
+                return AgentSignal(0, 0.1, "Empty feed")
+
+            avg = score / count
+            confidence = round(min(0.75, abs(avg) * 0.25 + 0.15), 3)
+            signal = 1 if avg > 0.3 else -1 if avg < -0.3 else 0
+            return AgentSignal(signal, confidence, f"News sentiment {avg:.2f} ({count} headlines)")
+        except Exception as e:
+            return AgentSignal(0, 0.1, f"Error: {str(e)[:40]}")
+
+
+# Factory: create a fully-initialized swarm with all 7 agents
 # ---------------------------------------------------------------------------
 
 def create_swarm() -> SwarmConsensus:
@@ -696,5 +743,7 @@ def create_swarm() -> SwarmConsensus:
         BollingerAgent(),
         VolumeAgent(),
         MACDAgent(),
+        SentimentAgent(),
     ]
     return SwarmConsensus(agents)
+

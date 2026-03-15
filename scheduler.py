@@ -1,4 +1,4 @@
-"""
+﻿"""
 Trading Swarm Scheduler
 
 Scans the watchlist every 30 minutes during market hours (9:30-16:00 ET, weekdays).
@@ -260,3 +260,4 @@ def start_scheduler(auto_trade: bool = True, force_first_run: bool = True):
 
 if __name__ == "__main__":
     start_scheduler()
+
