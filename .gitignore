@@ -1,0 +1,7 @@
+.env
+*.env
+simulation_portfolio.json
+__pycache__/
+*.pyc
+daily_reports/
+signals_log.csv
